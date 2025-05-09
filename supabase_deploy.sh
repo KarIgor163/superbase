@@ -25,6 +25,17 @@ log_error() {
     local ERROR_FILE="baza_script.txt"
     local DATE=$(date "+%Y-%m-%d %H:%M:%S")
     
+    # Создаем файл, если его нет
+    if [ ! -f "$ERROR_FILE" ]; then
+        echo "# База данных ошибок при установке и настройке Supabase" > "$ERROR_FILE"
+        echo "" >> "$ERROR_FILE"
+        echo "# Формат:" >> "$ERROR_FILE"
+        echo "# [ДАТА] [ТИП_ОШИБКИ] - [ОПИСАНИЕ_ОШИБКИ]" >> "$ERROR_FILE"
+        echo "# [ПОПЫТКА_ИСПРАВЛЕНИЯ]" >> "$ERROR_FILE"
+        echo "# [РЕЗУЛЬТАТ]" >> "$ERROR_FILE"
+        echo "" >> "$ERROR_FILE"
+    fi
+    
     echo -e "\n[${DATE}] [ERROR] - ${ERROR_MSG}" >> "$ERROR_FILE"
     echo -e "${RED}❌ Ошибка: ${ERROR_MSG}${NC}"
 }
@@ -44,19 +55,21 @@ safe_read() {
     fi
     
     # Режим скрытого ввода для паролей
+    local USER_INPUT
     if [ "$HIDE_INPUT" = "true" ]; then
-        read -s USER_INPUT
+        IFS= read -rs USER_INPUT
         echo "" # Новая строка после скрытого ввода
     else
-        read USER_INPUT
+        IFS= read -r USER_INPUT
     fi
     
-    # Очистка ввода от символов возврата каретки
-    USER_INPUT=$(echo "$USER_INPUT" | tr -d '\r')
+    # Очистка ввода от символов возврата каретки и пробелов по краям
+    USER_INPUT=$(echo "$USER_INPUT" | tr -d '\r' | xargs)
     
     # Если ввод пустой - использовать значение по умолчанию
     if [ -z "$USER_INPUT" ] && [ -n "$DEFAULT_VALUE" ]; then
         USER_INPUT="$DEFAULT_VALUE"
+        echo "Используется значение по умолчанию: $DEFAULT_VALUE"
     fi
     
     # Сохранение в указанную переменную через eval
@@ -78,13 +91,18 @@ safe_select() {
     done
     
     # Чтение ввода и очистка символов возврата каретки
-    read USER_INPUT
-    USER_INPUT=$(echo "$USER_INPUT" | tr -d '\r')
+    local USER_INPUT
+    IFS= read -r USER_INPUT
+    USER_INPUT=$(echo "$USER_INPUT" | tr -d '\r' | xargs)
+    
+    # Вывод для отладки
+    echo "Выбрана опция: '$USER_INPUT'"
     
     # Проверка ввода на корректность
     if [[ "$USER_INPUT" =~ ^[0-9]+$ ]] && [ "$USER_INPUT" -ge 1 ] && [ "$USER_INPUT" -le ${#OPTIONS[@]} ]; then
         # Ввод корректный - сохраняем выбранный индекс (с учетом что массивы с 0, а опции с 1)
         eval "$VAR_NAME=$((USER_INPUT-1))"
+        echo "Выбрано: ${OPTIONS[$((USER_INPUT-1))]}"
         return 0
     else
         echo -e "${RED}Некорректный выбор. Попробуйте снова.${NC}"
@@ -109,12 +127,21 @@ safe_yes_no() {
     fi
     
     echo -e "${BLUE}${PROMPT}${DEFAULT_DISPLAY}:${NC}"
-    read USER_INPUT
-    USER_INPUT=$(echo "$USER_INPUT" | tr -d '\r')
+    
+    # Используем IFS и read -r для более надежного чтения ввода
+    local USER_INPUT
+    IFS= read -r USER_INPUT
+    
+    # Дополнительно очищаем от символов возврата каретки и пробелов по краям
+    USER_INPUT=$(echo "$USER_INPUT" | tr -d '\r' | xargs)
+    
+    # Вывод для отладки
+    echo "Получен ввод: '$USER_INPUT'"
     
     # Если ввод пустой и есть значение по умолчанию
     if [ -z "$USER_INPUT" ] && [ -n "$DEFAULT" ]; then
         USER_INPUT="$DEFAULT"
+        echo "Используется значение по умолчанию: $DEFAULT"
     fi
     
     case "$USER_INPUT" in
@@ -190,8 +217,14 @@ check_dependencies() {
             echo "   - $dep"
         done
         
-        # Использование безопасной функции выбора
+        # Используем локальную переменную вместо глобальной
+        local INSTALL_DEPS
+        
+        # Запрос на установку зависимостей
         safe_yes_no "INSTALL_DEPS" "Установить отсутствующие зависимости?" "y"
+        
+        # Добавляем эхо для отладки
+        echo "Значение INSTALL_DEPS: $INSTALL_DEPS"
         
         if [ "$INSTALL_DEPS" = "true" ]; then
             echo -e "${BLUE}Установка зависимостей...${NC}"
@@ -199,20 +232,25 @@ check_dependencies() {
             for dep in "${MISSING[@]}"; do
                 case $dep in
                     "docker")
+                        echo -e "${BLUE}Установка Docker...${NC}"
                         sudo apt-get install -y docker.io
                         sudo systemctl enable docker
                         sudo systemctl start docker
                         ;;
                     "docker-compose")
+                        echo -e "${BLUE}Установка Docker Compose...${NC}"
                         sudo apt-get install -y docker-compose
                         ;;
                     "git")
+                        echo -e "${BLUE}Установка Git...${NC}"
                         sudo apt-get install -y git
                         ;;
                     "curl")
+                        echo -e "${BLUE}Установка Curl...${NC}"
                         sudo apt-get install -y curl
                         ;;
                     "openssl")
+                        echo -e "${BLUE}Установка OpenSSL...${NC}"
                         sudo apt-get install -y openssl
                         ;;
                 esac
@@ -605,6 +643,11 @@ setup_ssl() {
 
 # Основная функция
 main() {
+    echo -e "\n${BLUE}Начинаем установку Supabase...${NC}"
+    
+    # Устанавливаем обработчик ошибок
+    trap 'echo -e "${RED}Произошла ошибка! Установка прервана.${NC}"; log_error "Установка прервана из-за неизвестной ошибки"; exit 1' ERR
+    
     # Проверка зависимостей
     check_dependencies
     
@@ -631,6 +674,9 @@ main() {
     
     # Сохранение учетных данных
     save_credentials
+    
+    # Удаляем обработчик ошибок
+    trap - ERR
     
     echo -e "\n${GREEN}✅ Установка Supabase завершена успешно!${NC}"
     echo -e "${BLUE}Учетные данные сохранены в: ${INSTALL_DIR}/credentials.txt${NC}"
