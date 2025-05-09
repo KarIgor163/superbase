@@ -1,7 +1,15 @@
 #!/bin/bash
 
 # Скрипт для автоматического развертывания Supabase на VPS
+# Добавляем режим отладки для поиска проблем
+# Раскомментируйте строку ниже для включения режима отладки
+# set -x
+
+# 1Обязательная остановка при ошибках
 set -e
+
+# Фиксируем начальный каталог для возможности возврата
+INITIAL_DIR=$(pwd)
 
 # Цвета для вывода
 GREEN='\033[0;32m'
@@ -18,6 +26,30 @@ echo -e "${BLUE}====================================================${NC}"
 echo -e "${BLUE}    АВТОМАТИЧЕСКОЕ РАЗВЕРТЫВАНИЕ SUPABASE НА VPS    ${NC}"
 echo -e "${BLUE}====================================================${NC}"
 echo ""
+
+# Обработчик для очистки при выходе
+cleanup() {
+    echo -e "\n${BLUE}Очистка временных ресурсов...${NC}"
+    # Возврат в начальный каталог
+    cd "$INITIAL_DIR" 2>/dev/null || true
+    # Здесь можно добавить удаление временных файлов
+}
+
+# Регистрируем обработчик выхода
+trap cleanup EXIT
+
+# Обработчик для ошибок
+error_handler() {
+    local LINE=$1
+    local CMD=$2
+    local CODE=$3
+    log_error "Ошибка в строке $LINE при выполнении команды '$CMD' (код: $CODE)"
+    echo -e "${RED}❌ Произошла ошибка! Установка прервана в строке $LINE.${NC}"
+    exit $CODE
+}
+
+# Устанавливаем обработчик ошибок
+trap 'error_handler ${LINENO} "$BASH_COMMAND" $?' ERR
 
 # Функция для логирования ошибок
 log_error() {
@@ -49,22 +81,22 @@ safe_read() {
     
     # Если есть значение по умолчанию, показать его в скобках
     if [ -n "$DEFAULT_VALUE" ]; then
-        echo -e "${BLUE}${PROMPT} (${DEFAULT_VALUE}):${NC}"
+        echo -ne "${BLUE}${PROMPT} (${DEFAULT_VALUE}): ${NC}"
     else
-        echo -e "${BLUE}${PROMPT}:${NC}"
+        echo -ne "${BLUE}${PROMPT}: ${NC}"
     fi
     
     # Режим скрытого ввода для паролей
-    local USER_INPUT
+    local USER_INPUT=""
+    
     if [ "$HIDE_INPUT" = "true" ]; then
-        IFS= read -rs USER_INPUT
+        # Для скрытого ввода (паролей)
+        read -rs USER_INPUT
         echo "" # Новая строка после скрытого ввода
     else
-        IFS= read -r USER_INPUT
+        # Чтение строки без проблем с символами возврата каретки
+        read -re USER_INPUT
     fi
-    
-    # Очистка ввода от символов возврата каретки и пробелов по краям
-    USER_INPUT=$(echo "$USER_INPUT" | tr -d '\r' | xargs)
     
     # Если ввод пустой - использовать значение по умолчанию
     if [ -z "$USER_INPUT" ] && [ -n "$DEFAULT_VALUE" ]; then
@@ -72,8 +104,8 @@ safe_read() {
         echo "Используется значение по умолчанию: $DEFAULT_VALUE"
     fi
     
-    # Сохранение в указанную переменную через eval
-    eval "$VAR_NAME=\"$USER_INPUT\""
+    # Сохранение в указанную переменную через eval с экранированием специальных символов
+    eval "$VAR_NAME='$USER_INPUT'"
 }
 
 # Функция для безопасного выбора из опций
@@ -90,25 +122,23 @@ safe_select() {
         echo "$(($i+1))) ${OPTIONS[$i]}"
     done
     
-    # Чтение ввода и очистка символов возврата каретки
-    local USER_INPUT
-    IFS= read -r USER_INPUT
-    USER_INPUT=$(echo "$USER_INPUT" | tr -d '\r' | xargs)
-    
-    # Вывод для отладки
-    echo "Выбрана опция: '$USER_INPUT'"
-    
-    # Проверка ввода на корректность
-    if [[ "$USER_INPUT" =~ ^[0-9]+$ ]] && [ "$USER_INPUT" -ge 1 ] && [ "$USER_INPUT" -le ${#OPTIONS[@]} ]; then
-        # Ввод корректный - сохраняем выбранный индекс (с учетом что массивы с 0, а опции с 1)
-        eval "$VAR_NAME=$((USER_INPUT-1))"
-        echo "Выбрано: ${OPTIONS[$((USER_INPUT-1))]}"
-        return 0
-    else
-        echo -e "${RED}Некорректный выбор. Попробуйте снова.${NC}"
-        # Рекурсивный вызов для повторного выбора
-        safe_select "$VAR_NAME" "$PROMPT" "${OPTIONS[@]}"
-    fi
+    # Цикл для обработки ввода до получения корректного значения
+    while true; do
+        echo -ne "${BLUE}Введите номер опции: ${NC}"
+        local USER_INPUT
+        read -re USER_INPUT
+        
+        # Проверка ввода на корректность
+        if [[ "$USER_INPUT" =~ ^[0-9]+$ ]] && [ "$USER_INPUT" -ge 1 ] && [ "$USER_INPUT" -le ${#OPTIONS[@]} ]; then
+            # Ввод корректный - сохраняем выбранный индекс
+            local SELECTED_INDEX=$((USER_INPUT-1))
+            eval "$VAR_NAME=$SELECTED_INDEX"
+            echo -e "${GREEN}Выбрано: ${OPTIONS[$SELECTED_INDEX]}${NC}"
+            return 0
+        else
+            echo -e "${RED}Некорректный выбор. Введите число от 1 до ${#OPTIONS[@]}.${NC}"
+        fi
+    done
 }
 
 # Функция для безопасного выбора да/нет
@@ -126,36 +156,42 @@ safe_yes_no() {
         DEFAULT_DISPLAY=" [y/n]"
     fi
     
-    echo -e "${BLUE}${PROMPT}${DEFAULT_DISPLAY}:${NC}"
+    # Сначала выводим приглашение для ввода
+    echo -ne "${BLUE}${PROMPT}${DEFAULT_DISPLAY}: ${NC}"
     
-    # Используем IFS и read -r для более надежного чтения ввода
-    local USER_INPUT
-    IFS= read -r USER_INPUT
-    
-    # Дополнительно очищаем от символов возврата каретки и пробелов по краям
-    USER_INPUT=$(echo "$USER_INPUT" | tr -d '\r' | xargs)
-    
-    # Вывод для отладки
-    echo "Получен ввод: '$USER_INPUT'"
-    
-    # Если ввод пустой и есть значение по умолчанию
-    if [ -z "$USER_INPUT" ] && [ -n "$DEFAULT" ]; then
-        USER_INPUT="$DEFAULT"
-        echo "Используется значение по умолчанию: $DEFAULT"
-    fi
-    
-    case "$USER_INPUT" in
-        y|Y|yes|Yes|YES)
-            eval "$VAR_NAME=true"
-            ;;
-        n|N|no|No|NO)
-            eval "$VAR_NAME=false"
-            ;;
-        *)
-            echo -e "${RED}Некорректный выбор. Введите 'y' или 'n'.${NC}"
-            safe_yes_no "$VAR_NAME" "$PROMPT" "$DEFAULT"
-            ;;
-    esac
+    # Используем многострочный подход для считывания ввода
+    while true; do
+        # Читаем символ за символом без ожидания Enter
+        # Этот подход избегает проблем с \r
+        read -n 1 choice
+        
+        # Выводим новую строку после ввода
+        echo ""
+        
+        # Проверяем ввод (включая пустой ввод для значения по умолчанию)
+        if [ -z "$choice" ] && [ -n "$DEFAULT" ]; then
+            choice="$DEFAULT"
+            echo "Используется значение по умолчанию: $DEFAULT"
+        fi
+        
+        # Обрабатываем ввод
+        case "$choice" in
+            y|Y)
+                echo "Выбрано: Да"
+                eval "$VAR_NAME=true"
+                break
+                ;;
+            n|N)
+                echo "Выбрано: Нет"
+                eval "$VAR_NAME=false"
+                break
+                ;;
+            *)
+                echo -e "${RED}Некорректный выбор. Введите 'y' или 'n'.${NC}"
+                echo -ne "${BLUE}${PROMPT}${DEFAULT_DISPLAY}: ${NC}"
+                ;;
+        esac
+    done
 }
 
 # Массивы для хранения учетных данных
@@ -217,50 +253,61 @@ check_dependencies() {
             echo "   - $dep"
         done
         
-        # Используем локальную переменную вместо глобальной
-        local INSTALL_DEPS
+        # Инициализируем переменную локально перед использованием
+        local INSTALL_DEPS="false"
         
-        # Запрос на установку зависимостей
+        # Запрос пользователю с обработкой ошибок
+        echo -e "\n${BLUE}Требуется установка зависимостей для продолжения.${NC}"
         safe_yes_no "INSTALL_DEPS" "Установить отсутствующие зависимости?" "y"
         
-        # Добавляем эхо для отладки
-        echo "Значение INSTALL_DEPS: $INSTALL_DEPS"
-        
+        # Проверяем результат
         if [ "$INSTALL_DEPS" = "true" ]; then
-            echo -e "${BLUE}Установка зависимостей...${NC}"
-            sudo apt-get update
+            echo -e "\n${BLUE}Начинаем установку зависимостей...${NC}"
+            sudo apt-get update -y
+            
             for dep in "${MISSING[@]}"; do
+                echo -e "\n${BLUE}Устанавливаем $dep...${NC}"
                 case $dep in
                     "docker")
-                        echo -e "${BLUE}Установка Docker...${NC}"
                         sudo apt-get install -y docker.io
                         sudo systemctl enable docker
                         sudo systemctl start docker
                         ;;
                     "docker-compose")
-                        echo -e "${BLUE}Установка Docker Compose...${NC}"
                         sudo apt-get install -y docker-compose
                         ;;
                     "git")
-                        echo -e "${BLUE}Установка Git...${NC}"
                         sudo apt-get install -y git
                         ;;
                     "curl")
-                        echo -e "${BLUE}Установка Curl...${NC}"
                         sudo apt-get install -y curl
                         ;;
                     "openssl")
-                        echo -e "${BLUE}Установка OpenSSL...${NC}"
                         sudo apt-get install -y openssl
                         ;;
                 esac
             done
-            echo -e "${GREEN}✅ Зависимости установлены${NC}"
+            
+            echo -e "\n${GREEN}✅ Все зависимости установлены успешно!${NC}"
+            
+            # Проверяем статус Docker после установки
+            if [[ " ${MISSING[@]} " =~ " docker " ]]; then
+                echo -e "\n${BLUE}Проверка статуса Docker...${NC}"
+                if systemctl is-active --quiet docker; then
+                    echo -e "${GREEN}Docker запущен успешно${NC}"
+                else
+                    echo -e "${YELLOW}Пробуем запустить Docker...${NC}"
+                    sudo systemctl start docker
+                fi
+            fi
         else
-            echo -e "${RED}❌ Для работы скрипта требуются все зависимости. Установите их вручную и запустите скрипт снова.${NC}"
+            echo -e "\n${RED}❌ Установка отменена пользователем.${NC}"
+            echo -e "${RED}Для работы скрипта требуются все зависимости. Установите их вручную и запустите скрипт снова.${NC}"
             log_error "Установка прервана из-за отсутствия необходимых зависимостей"
             exit 1
         fi
+    else
+        echo -e "\n${GREEN}✅ Все необходимые зависимости установлены.${NC}"
     fi
 }
 
@@ -645,42 +692,37 @@ setup_ssl() {
 main() {
     echo -e "\n${BLUE}Начинаем установку Supabase...${NC}"
     
-    # Устанавливаем обработчик ошибок
-    trap 'echo -e "${RED}Произошла ошибка! Установка прервана.${NC}"; log_error "Установка прервана из-за неизвестной ошибки"; exit 1' ERR
-    
-    # Проверка зависимостей
+    # 1. Проверяем зависимости
     check_dependencies
     
-    # Выбор источника
+    # 2. Выбираем источник установки
     select_source
     
-    # Сбор информации
+    # 3. Собираем информацию для настройки
     collect_info
     
-    # Загрузка Supabase
+    # 4. Загружаем и подготавливаем исходные файлы
     download_supabase
     
-    # Настройка
+    # 5. Настраиваем конфигурацию
     configure_supabase
     
-    # Запуск
+    # 6. Запускаем сервисы
     start_supabase
     
-    # Настройка Nginx
+    # 7. Настраиваем внешний доступ (Nginx)
     setup_nginx
     
-    # Настройка SSL
+    # 8. Настраиваем SSL если требуется
     setup_ssl
     
-    # Сохранение учетных данных
+    # 9. Сохраняем учетные данные
     save_credentials
-    
-    # Удаляем обработчик ошибок
-    trap - ERR
     
     echo -e "\n${GREEN}✅ Установка Supabase завершена успешно!${NC}"
     echo -e "${BLUE}Учетные данные сохранены в: ${INSTALL_DIR}/credentials.txt${NC}"
 }
 
-# Запуск основной функции
-main 
+# Запуск основной функции - должен быть в самом конце скрипта
+# Добавляем & wait для обработки сигналов прерывания корректно
+main "$@" & wait 
