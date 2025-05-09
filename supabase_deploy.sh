@@ -79,10 +79,12 @@ check_dependencies() {
         done
         
         echo -e "\n${BLUE}Установить отсутствующие зависимости? (y/n)${NC}"
-        read -p "> " INSTALL_DEPS
+        read INSTALL_DEPS
+        # Удаляем возможные символы возврата каретки
+        INSTALL_DEPS=$(echo "$INSTALL_DEPS" | tr -d '\r')
         
-        if [[ "$INSTALL_DEPS" == "y" || "$INSTALL_DEPS" == "Y" ]]; then
-            echo -e "${BLUE}Installing dependencies...${NC}"
+        if [ "$INSTALL_DEPS" = "y" ] || [ "$INSTALL_DEPS" = "Y" ]; then
+            echo -e "${BLUE}Установка зависимостей...${NC}"
             sudo apt-get update
             for dep in "${MISSING[@]}"; do
                 case $dep in
@@ -123,27 +125,32 @@ select_source() {
     echo "2) Архив (curl)"
     echo "3) Локальная директория"
     
-    read -p "> " SOURCE_TYPE
+    read SOURCE_TYPE
+    SOURCE_TYPE=$(echo "$SOURCE_TYPE" | tr -d '\r')
     
     case $SOURCE_TYPE in
         1)
             echo -e "\n${BLUE}Введите URL Git репозитория:${NC}"
-            read -p "> " REPO_URL
+            read REPO_URL
+            REPO_URL=$(echo "$REPO_URL" | tr -d '\r')
             
             echo -e "\n${BLUE}Введите название ветки (по умолчанию: main):${NC}"
-            read -p "> " BRANCH_NAME
+            read BRANCH_NAME
+            BRANCH_NAME=$(echo "$BRANCH_NAME" | tr -d '\r')
             BRANCH_NAME=${BRANCH_NAME:-main}
             
             CREDENTIALS["project_source"]="Git: $REPO_URL (ветка: $BRANCH_NAME)"
             ;;
         2)
             echo -e "\n${BLUE}Введите URL архива:${NC}"
-            read -p "> " ARCHIVE_URL
+            read ARCHIVE_URL
+            ARCHIVE_URL=$(echo "$ARCHIVE_URL" | tr -d '\r')
             CREDENTIALS["project_source"]="Archive: $ARCHIVE_URL"
             ;;
         3)
             echo -e "\n${BLUE}Введите путь к директории проекта:${NC}"
-            read -p "> " PROJECT_DIR
+            read PROJECT_DIR
+            PROJECT_DIR=$(echo "$PROJECT_DIR" | tr -d '\r')
             CREDENTIALS["project_source"]="Local directory: $PROJECT_DIR"
             ;;
         *)
@@ -159,23 +166,27 @@ collect_info() {
     
     # Базовая информация о проекте
     echo -e "\n${BLUE}Название проекта:${NC}"
-    read -p "> " PROJECT_NAME
+    read PROJECT_NAME
+    PROJECT_NAME=$(echo "$PROJECT_NAME" | tr -d '\r')
     CREDENTIALS["project_name"]=$PROJECT_NAME
     
     # Директория установки
     echo -e "\n${BLUE}Директория для установки (по умолчанию: /opt/$PROJECT_NAME):${NC}"
-    read -p "> " INSTALL_DIR
+    read INSTALL_DIR
+    INSTALL_DIR=$(echo "$INSTALL_DIR" | tr -d '\r')
     INSTALL_DIR=${INSTALL_DIR:-/opt/$PROJECT_NAME}
     CREDENTIALS["install_dir"]=$INSTALL_DIR
     
     # Данные для базы данных
     echo -e "\n${BLUE}Имя пользователя базы данных (по умолчанию: postgres):${NC}"
-    read -p "> " DB_USER
+    read DB_USER
+    DB_USER=$(echo "$DB_USER" | tr -d '\r')
     DB_USER=${DB_USER:-postgres}
     CREDENTIALS["db_user"]=$DB_USER
     
     echo -e "\n${BLUE}Пароль для базы данных (по умолчанию: случайный):${NC}"
-    read -s -p "> " DB_PASSWORD
+    read -s DB_PASSWORD
+    DB_PASSWORD=$(echo "$DB_PASSWORD" | tr -d '\r')
     echo ""
     if [ -z "$DB_PASSWORD" ]; then
         DB_PASSWORD=$(openssl rand -base64 12)
@@ -183,33 +194,39 @@ collect_info() {
     CREDENTIALS["db_password"]=$DB_PASSWORD
     
     echo -e "\n${BLUE}Имя базы данных (по умолчанию: $PROJECT_NAME):${NC}"
-    read -p "> " DB_NAME
+    read DB_NAME
+    DB_NAME=$(echo "$DB_NAME" | tr -d '\r')
     DB_NAME=${DB_NAME:-$PROJECT_NAME}
     CREDENTIALS["db_name"]=$DB_NAME
     
     # Данные администратора
     echo -e "\n${BLUE}Email администратора:${NC}"
-    read -p "> " ADMIN_EMAIL
+    read ADMIN_EMAIL
+    ADMIN_EMAIL=$(echo "$ADMIN_EMAIL" | tr -d '\r')
     CREDENTIALS["admin_email"]=$ADMIN_EMAIL
     
     echo -e "\n${BLUE}Пароль администратора:${NC}"
-    read -s -p "> " ADMIN_PASSWORD
+    read -s ADMIN_PASSWORD
+    ADMIN_PASSWORD=$(echo "$ADMIN_PASSWORD" | tr -d '\r')
     echo ""
     CREDENTIALS["admin_password"]=$ADMIN_PASSWORD
     
     # Настройки доменного имени
     echo -e "\n${BLUE}Доменное имя (опционально):${NC}"
-    read -p "> " DOMAIN_NAME
+    read DOMAIN_NAME
+    DOMAIN_NAME=$(echo "$DOMAIN_NAME" | tr -d '\r')
     CREDENTIALS["domain_name"]=${DOMAIN_NAME:-"использовать IP-адрес"}
     
     # Настройка SSL
     echo -e "\n${BLUE}Настроить SSL-сертификат? (y/n):${NC}"
-    read -p "> " SETUP_SSL
+    read SETUP_SSL
+    SETUP_SSL=$(echo "$SETUP_SSL" | tr -d '\r')
     CREDENTIALS["setup_ssl"]=${SETUP_SSL:-"n"}
     
     # JWT Secret для API
     echo -e "\n${BLUE}JWT Secret (по умолчанию: случайный):${NC}"
-    read -s -p "> " JWT_SECRET
+    read -s JWT_SECRET
+    JWT_SECRET=$(echo "$JWT_SECRET" | tr -d '\r')
     echo ""
     if [ -z "$JWT_SECRET" ]; then
         JWT_SECRET=$(openssl rand -base64 32)
